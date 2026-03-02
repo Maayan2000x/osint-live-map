@@ -1,4 +1,4 @@
-]const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTW9bj91CB10n8fciv4NykoBf0JYDvBIrnYWas7I125uc-hltvtjNloatvpAsBCY1G7uD0VImPrfUzJ/pub?output=csv";
+const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTW9bj91CB10n8fciv4NykoBf0JYDvBIrnYWas7I125uc-hltvtjNloatvpAsBCY1G7uD0VImPrfUzJ/pub?output=csv";
 
 const stanceColors = {
   supportive: "#2ECC71",

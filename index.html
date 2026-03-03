@@ -5,29 +5,30 @@
   <title>Country Stance Map</title>
 
   <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-    }
-    #map {
-      width: 100%;
-      height: 100%;
-    }
-    .leaflet-tooltip {
-      font-size: 14px;
-      white-space: pre-line;
-    }
+    html, body { height: 100%; margin: 0; }
+    #map { width: 100%; height: 100%; }
+    .leaflet-tooltip { font-size: 14px; white-space: pre-line; }
   </style>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script src="https://www.gstatic.com/charts/loader.js"></script>
 </head>
 
 <body>
 <div id="map"></div>
 
 <script>
-const csvUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTW9bj91CB10n8fciv4NykoBf0JYDvBIrnYWas7I125uc-hltvtjNloatvpAsBCY1G7uD0VImPrfUzJ/pub?gid=572594260&single=true&output=csv";
+// LIVE Google Sheet URL (Visualization API)
+const sheetID = "1qx66Rk8WavEiY-7hUn8xZW0z8oU-A2CaMCl_jtQHCSU";
+const gid = "572594260";
+const sheetQueryUrl =
+  "https://docs.google.com/spreadsheets/d/" +
+  sheetID +
+  "/gviz/tq?gid=" +
+  gid +
+  "&tqx=out:json";
 
 const stanceColors = {
   supportive: "#2ECC71",
@@ -36,104 +37,58 @@ const stanceColors = {
   opposed: "#E74C3C"
 };
 
-function parseCSV(text) {
-  const rows = [];
-  let current = [];
-  let value = "";
-  let inQuotes = false;
+google.charts.load("current", { packages: ["table"] });
 
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    const next = text[i + 1];
+function loadSheetData() {
+  return fetch(sheetQueryUrl)
+    .then(r => r.text())
+    .then(text => {
+      const json = JSON.parse(text.substring(47, text.length - 2));
+      const table = json.table;
 
-    if (c === '"' && inQuotes && next === '"') { value += '"'; i++; }
-    else if (c === '"') { inQuotes = !inQuotes; }
-    else if (c === "," && !inQuotes) { current.push(value.trim()); value = ""; }
-    else if ((c === "\n" || c === "\r") && !inQuotes) {
-      if (value.length > 0 || current.length > 0) {
-        current.push(value.trim());
-        rows.push(current);
-      }
-      current = [];
-      value = "";
-    } else value += c;
-  }
+      const headers = table.cols.map(c => (c.label || "").toLowerCase());
+      const rows = table.rows.map(r =>
+        r.c.map(cell => (cell && cell.v ? String(cell.v).trim() : ""))
+      );
 
-  if (value.length > 0 || current.length > 0) {
-    current.push(value.trim());
-    rows.push(current);
-  }
+      const data = rows.map(row => {
+        const obj = {};
+        headers.forEach((h, i) => obj[h] = row[i] || "");
+        return obj;
+      });
 
-  return rows;
-}
-
-async function loadCSV() {
-  const res = await fetch(csvUrl);
-  const text = await res.text();
-  const rows = parseCSV(text);
-
-  if (rows.length < 2) return [];
-
-  const headers = rows[0].map(h => h.trim().toLowerCase());
-  const data = rows.slice(1).map(row => {
-    const obj = {};
-    headers.forEach((h, i) => obj[h] = (row[i] || "").trim());
-    return obj;
-  });
-
-  return data.filter(r =>
-    r.country && r.country.trim() !== "" &&
-    r.stance && r.stance.trim() !== ""
-  );
+      return data.filter(r =>
+        r.country !== "" &&
+        r.stance !== ""
+      );
+    });
 }
 
 async function loadMap() {
   const map = L.map("map").setView([20, 0], 2);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 6 }).addTo(map);
 
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 6
-  }).addTo(map);
-
-  const csvData = await loadCSV();
+  const data = await loadSheetData();
 
   const stanceMap = {};
-  csvData.forEach(r => {
-    const name = (r.country || "").toLowerCase();
-    stanceMap[name] = {
-      stance: (r.stance || "").toLowerCase(),
+  data.forEach(r => {
+    const key = r.country.toLowerCase();
+    stanceMap[key] = {
+      stance: r.stance.toLowerCase(),
       notes: r.notes || ""
     };
   });
 
-  const geo = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson")
-    .then(r => r.json());
+  const geo = await fetch(
+    "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
+  ).then(r => r.json());
 
   function style(feature) {
     const name = (feature.properties.ADMIN || "").toLowerCase();
     const entry = stanceMap[name];
     let color = "#cccccc";
     if (entry && stanceColors[entry.stance]) color = stanceColors[entry.stance];
-    return {
-      weight: 1,
-      color: "#333",
-      fillColor: color,
-      fillOpacity: 0.75
-    };
+    return { weight: 1, color: "#333", fillColor: color, fillOpacity: 0.75 };
   }
 
   function onEachFeature(feature, layer) {
-    const name = feature.properties.ADMIN || "";
-    const entry = stanceMap[name.toLowerCase()];
-    let tooltip = name;
-    if (entry && entry.notes) tooltip += "\n" + entry.notes;
-    layer.bindTooltip(tooltip, { sticky: true });
-  }
-
-  L.geoJson(geo, { style, onEachFeature }).addTo(map);
-}
-
-loadMap();
-</script>
-
-</body>
-</html>

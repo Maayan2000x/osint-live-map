@@ -12,7 +12,6 @@
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
   <script src="https://www.gstatic.com/charts/loader.js"></script>
 </head>
 
@@ -20,7 +19,7 @@
 <div id="map"></div>
 
 <script>
-// LIVE Google Sheet URL (Visualization API)
+// YOUR LIVE GOOGLE SHEET (Visualization API)
 const sheetID = "1qx66Rk8WavEiY-7hUn8xZW0z8oU-A2CaMCl_jtQHCSU";
 const gid = "572594260";
 const sheetQueryUrl =
@@ -30,6 +29,7 @@ const sheetQueryUrl =
   gid +
   "&tqx=out:json";
 
+// FINAL stance colors
 const stanceColors = {
   supportive: "#2ECC71",
   neutral: "#F1C40F",
@@ -37,6 +37,111 @@ const stanceColors = {
   opposed: "#E74C3C"
 };
 
+// ---- MASSIVE, PERMANENT COUNTRY ALIAS LIST ----
+// ANY of these will match correctly. You can add more later if needed.
+const countryAliases = {
+  "united states": "United States",
+  "usa": "United States",
+  "u.s.a": "United States",
+  "us": "United States",
+  "u.s.": "United States",
+  "america": "United States",
+
+  "south korea": "Republic of Korea",
+  "s korea": "Republic of Korea",
+  "republic of korea": "Republic of Korea",
+  "korea south": "Republic of Korea",
+
+  "north korea": "Democratic People's Republic of Korea",
+
+  "russia": "Russian Federation",
+  "russian federation": "Russian Federation",
+
+  "iran": "Iran (Islamic Republic of)",
+  "islamic republic of iran": "Iran (Islamic Republic of)",
+
+  "venezuela": "Venezuela (Bolivarian Republic of)",
+  "bolivia": "Bolivia (Plurinational State of)",
+  "tanzania": "United Republic of Tanzania",
+
+  "czechia": "Czech Republic",
+
+  "cape verde": "Cabo Verde",
+
+  "moldova": "Republic of Moldova",
+
+  "syria": "Syrian Arab Republic",
+
+  "ivory coast": "Côte d'Ivoire",
+  "cote d'ivoire": "Côte d'Ivoire",
+
+  "dr congo": "Democratic Republic of the Congo",
+  "democratic republic of congo": "Democratic Republic of the Congo",
+
+  "congo": "Congo",
+
+  "united kingdom": "United Kingdom",
+  "uk": "United Kingdom",
+  "britain": "United Kingdom",
+  "great britain": "United Kingdom",
+
+  "laos": "Lao People's Democratic Republic",
+
+  "vietnam": "Viet Nam",
+  "viet nam": "Viet Nam",
+
+  "eswatini": "Eswatini",
+  "swaziland": "Eswatini"
+};
+
+// Normalization helper
+function normalize(str) {
+  return str
+    .toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // strip accents
+    .replace(/[^a-z0-9 ]/g, "") // remove punctuation
+    .trim();
+}
+
+// VERY small fuzzy matcher for near matches
+function fuzzyMatchCountry(input, countryList) {
+  const target = normalize(input);
+  if (countryAliases[target]) return countryAliases[target];
+
+  let best = null;
+  let bestScore = Infinity;
+
+  for (const c of countryList) {
+    const nc = normalize(c);
+    const dist = levenshtein(target, nc);
+    if (dist < bestScore) {
+      bestScore = dist;
+      best = c;
+    }
+  }
+
+  // accept close matches
+  if (bestScore <= 4) return best;
+  return null;
+}
+
+// Levenshtein distance function
+function levenshtein(a, b) {
+  const m = [];
+  for (let i = 0; i <= b.length; i++) m[i] = [i];
+  for (let j = 0; j <= a.length; j++) m[0][j] = j;
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      m[i][j] = b.charAt(i-1) === a.charAt(j-1)
+        ? m[i-1][j-1]
+        : Math.min(m[i-1][j-1] + 1, m[i][j-1] + 1, m[i-1][j] + 1);
+    }
+  }
+  return m[b.length][a.length];
+}
+
+// LOAD SHEET DATA LIVE (no publishing needed)
 google.charts.load("current", { packages: ["table"] });
 
 function loadSheetData() {
@@ -58,30 +163,37 @@ function loadSheetData() {
       });
 
       return data.filter(r =>
-        r.country !== "" &&
-        r.stance !== ""
+        r.country && r.country.trim() !== "" &&
+        r.stance && r.stance.trim() !== ""
       );
     });
 }
 
 async function loadMap() {
   const map = L.map("map").setView([20, 0], 2);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 6 }).addTo(map);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 6 })
+    .addTo(map);
 
   const data = await loadSheetData();
 
-  const stanceMap = {};
-  data.forEach(r => {
-    const key = r.country.toLowerCase();
-    stanceMap[key] = {
-      stance: r.stance.toLowerCase(),
-      notes: r.notes || ""
-    };
-  });
-
+  // Load GEOJSON
   const geo = await fetch(
     "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
   ).then(r => r.json());
+
+  const geoNames = geo.features.map(f => f.properties.ADMIN);
+  const stanceMap = {};
+
+  // Apply fuzzy matching and aliasing
+  data.forEach(r => {
+    const match = fuzzyMatchCountry(r.country, geoNames);
+    if (match) {
+      stanceMap[match.toLowerCase()] = {
+        stance: r.stance.toLowerCase(),
+        notes: r.notes || ""
+      };
+    }
+  });
 
   function style(feature) {
     const name = (feature.properties.ADMIN || "").toLowerCase();
@@ -92,3 +204,18 @@ async function loadMap() {
   }
 
   function onEachFeature(feature, layer) {
+    const name = feature.properties.ADMIN || "";
+    const entry = stanceMap[name.toLowerCase()];
+    let tooltip = name;
+    if (entry && entry.notes) tooltip += "\n" + entry.notes;
+    layer.bindTooltip(tooltip, { sticky: true });
+  }
+
+  L.geoJson(geo, { style, onEachFeature }).addTo(map);
+}
+
+google.charts.setOnLoadCallback(loadMap);
+</script>
+
+</body>
+</html>

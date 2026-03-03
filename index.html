@@ -36,7 +36,6 @@ const stanceColors = {
   opposed: "#E74C3C"
 };
 
-// Robust CSV parser
 function parseCSV(text) {
   const rows = [];
   let current = [];
@@ -47,24 +46,17 @@ function parseCSV(text) {
     const c = text[i];
     const next = text[i + 1];
 
-    if (c === '"' && inQuotes && next === '"') {
-      value += '"';
-      i++;
-    } else if (c === '"') {
-      inQuotes = !inQuotes;
-    } else if (c === "," && !inQuotes) {
-      current.push(value.trim());
-      value = "";
-    } else if ((c === "\n" || c === "\r") && !inQuotes) {
+    if (c === '"' && inQuotes && next === '"') { value += '"'; i++; }
+    else if (c === '"') { inQuotes = !inQuotes; }
+    else if (c === "," && !inQuotes) { current.push(value.trim()); value = ""; }
+    else if ((c === "\n" || c === "\r") && !inQuotes) {
       if (value.length > 0 || current.length > 0) {
         current.push(value.trim());
         rows.push(current);
       }
       current = [];
       value = "";
-    } else {
-      value += c;
-    }
+    } else value += c;
   }
 
   if (value.length > 0 || current.length > 0) {
@@ -113,7 +105,6 @@ async function loadMap() {
     };
   });
 
-  // Load country borders from CDN
   const geo = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson")
     .then(r => r.json());
 
@@ -121,9 +112,7 @@ async function loadMap() {
     const name = (feature.properties.ADMIN || "").toLowerCase();
     const entry = stanceMap[name];
     let color = "#cccccc";
-    if (entry && stanceColors[entry.stance]) {
-      color = stanceColors[entry.stance];
-    }
+    if (entry && stanceColors[entry.stance]) color = stanceColors[entry.stance];
     return {
       weight: 1,
       color: "#333",
@@ -136,14 +125,11 @@ async function loadMap() {
     const name = feature.properties.ADMIN || "";
     const entry = stanceMap[name.toLowerCase()];
     let tooltip = name;
-    if (entry && entry.notes) tooltip += "\\n" + entry.notes;
+    if (entry && entry.notes) tooltip += "\n" + entry.notes;
     layer.bindTooltip(tooltip, { sticky: true });
   }
 
-  L.geoJson(geo, {
-    style,
-    onEachFeature
-  }).addTo(map);
+  L.geoJson(geo, { style, onEachFeature }).addTo(map);
 }
 
 loadMap();

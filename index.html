@@ -1,195 +1,78 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <meta charset="utf-8" />
-  <title>Country Stance Map</title>
+  <head>
+    <meta charset="utf-8">
+    <title>Country Stance Map</title>
 
-  <style>
-    html, body { height: 100%; margin: 0; }
-    #map { width: 100%; height: 100%; }
-    .leaflet-tooltip { font-size: 14px; white-space: pre-line; }
-  </style>
+    <style>
+      html, body { height:100%; margin:0; }
+      #regions_div { width:100%; height:100%; }
+    </style>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="https://www.gstatic.com/charts/loader.js"></script>
-</head>
+    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
 
-<body>
-<div id="map"></div>
+    <script type="text/javascript">
+      google.charts.load('current', {
+        'packages':['geochart'],
+      });
 
-<script>
-// YOUR GOOGLE SHEET — LIVE DATA (NO CSV)
-const sheetID = "1qx66Rk8WavEiY-7hUn8xZW0z8oU-A2CaMCl_jtQHCSU";
-const gid = "572594260";
-const sheetQueryUrl =
-  "https://docs.google.com/spreadsheets/d/" +
-  sheetID +
-  "/gviz/tq?gid=" +
-  gid +
-  "&tqx=out:json";
+      google.charts.setOnLoadCallback(drawRegionsMap);
 
-// stance → color
-const stanceColors = {
-  supportive: "#2ECC71",
-  neutral: "#F1C40F",
-  "neutral-bad": "#E67E22",
-  opposed: "#E74C3C"
-};
+      function drawRegionsMap() {
 
-// alias dictionary (for future‑proofing)
-const aliases = {
-  "united states of america": "United States",
-  "usa": "United States",
-  "us": "United States",
-  "america": "United States",
-  "u.s.": "United States",
-  
-  "south korea": "Republic of Korea",
-  "s korea": "Republic of Korea",
-  "korea south": "Republic of Korea",
-  
-  "north korea": "Democratic People's Republic of Korea",
-  
-  "russia": "Russian Federation",
-  
-  "iran": "Iran (Islamic Republic of)",
-  
-  "venezuela": "Venezuela (Bolivarian Republic of)",
-  "bolivia": "Bolivia (Plurinational State of)",
+        // LIVE SHEET URL
+        const query = new google.visualization.Query(
+          'https://docs.google.com/spreadsheets/d/1qx66Rk8WavEiY-7hUn8xZW0z8oU-A2CaMCl_jtQHCSU/gviz/tq?gid=572594260'
+        );
 
-  "tanzania": "United Republic of Tanzania",
-  "moldova": "Republic of Moldova",
-  
-  "czechia": "Czech Republic",
-  
-  "ivory coast": "Côte d'Ivoire",
-  "cote d'ivoire": "Côte d'Ivoire",
+        query.send(handleData);
+      }
 
-  "dr congo": "Democratic Republic of the Congo",
-  "democratic republic of congo": "Democratic Republic of the Congo",
-  "congo republic": "Congo",
+      function handleData(response) {
+        if (response.isError()) {
+          console.error('Error:', response.getMessage());
+          return;
+        }
 
-  "uk": "United Kingdom",
-  "britain": "United Kingdom",
-  "great britain": "United Kingdom",
+        const data = response.getDataTable();
 
-  "laos": "Lao People's Democratic Republic",
-  
-  "vietnam": "Viet Nam"
-};
+        // stance → color
+        const colors = {
+          'supportive': '#2ECC71',
+          'neutral': '#F1C40F',
+          'neutral-bad': '#E67E22',
+          'opposed': '#E74C3C'
+        };
 
-// normalization
-function norm(str) {
-  return str.toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9 ]/g, "")
-    .trim();
-}
+        // create a DataView that adds a color column
+        const view = new google.visualization.DataView(data);
+        view.setColumns([
+          0, // country
+          {
+            type: 'string',
+            label: 'Color',
+            calc: function (dt, row) {
+              const stance = dt.getValue(row, 1).toLowerCase();
+              return colors[stance] || '#cccccc';
+            }
+          },
+          2 // notes
+        ]);
 
-// Levenshtein
-function levenshtein(a, b) {
-  const m = [];
-  for (let i = 0; i <= b.length; i++) m[i] = [i];
-  for (let j = 0; j <= a.length; j++) m[0][j] = j;
+        const options = {
+          colorAxis: {colors:['#cccccc','#cccccc']},
+          legend: 'none',
+          tooltip: { isHtml: true }
+        };
 
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      m[i][j] = b[i-1] === a[j-1]
-        ? m[i-1][j-1]
-        : Math.min(m[i-1][j-1]+1, m[i][j-1]+1, m[i-1][j]+1);
-    }
-  }
-  return m[b.length][a.length];
-}
+        const chart = new google.visualization.GeoChart(document.getElementById('regions_div'));
+        chart.draw(view, options);
+      }
+    </script>
 
-// fuzzy match
-function matchCountry(input, geoNames) {
-  const n = norm(input);
-  if (aliases[n]) return aliases[n];
+  </head>
 
-  let best = null;
-  let score = Infinity;
-  for (const g of geoNames) {
-    const d = levenshtein(n, norm(g));
-    if (d < score) { score = d; best = g; }
-  }
-  return score <= 4 ? best : null;
-}
-
-// ---- LOAD SHEET LIVE ----
-google.charts.load("current", { packages: ["table"] });
-
-function loadSheet() {
-  return fetch(sheetQueryUrl)
-    .then(r => r.text())
-    .then(text => {
-      const json = JSON.parse(text.substring(47, text.length - 2));
-      const table = json.table;
-
-      const headers = table.cols.map(c => (c.label || "").toLowerCase());
-      const rows = table.rows.map(r =>
-        r.c.map(c => (c && c.v ? String(c.v).trim() : ""))
-      );
-
-      return rows.map(row => {
-        const o = {};
-        headers.forEach((h, i) => o[h] = row[i] || "");
-        return o;
-      }).filter(r =>
-        r.country && r.country.trim() !== "" &&
-        r.stance && r.stance.trim() !== ""
-      );
-    });
-}
-
-async function initMap() {
-  const map = L.map("map").setView([20, 0], 2);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 6
-  }).addTo(map);
-
-  const rows = await loadSheet();
-
-  // Load geojson
-  const geo = await fetch(
-    "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
-  ).then(r => r.json());
-
-  const geoNames = geo.features.map(f => f.properties.ADMIN);
-  const stanceMap = {};
-
-  rows.forEach(r => {
-    const match = matchCountry(r.country, geoNames);
-    if (match) {
-      stanceMap[match.toLowerCase()] = {
-        stance: r.stance.toLowerCase(),
-        notes: r.notes || ""
-      };
-    }
-  });
-
-  function style(feature) {
-    const name = feature.properties.ADMIN.toLowerCase();
-    const e = stanceMap[name];
-    let color = "#cccccc";
-    if (e && stanceColors[e.stance]) color = stanceColors[e.stance];
-    return { weight: 1, color: "#333", fillColor: color, fillOpacity: 0.75 };
-  }
-
-  function each(feature, layer) {
-    const name = feature.properties.ADMIN || "";
-    const e = stanceMap[name.toLowerCase()];
-    let tip = name;
-    if (e && e.notes) tip += "\n" + e.notes;
-    layer.bindTooltip(tip, { sticky: true });
-  }
-
-  L.geoJson(geo, { style, onEachFeature: each }).addTo(map);
-}
-
-google.charts.setOnLoadCallback(initMap);
-</script>
-
-</body>
+  <body>
+    <div id="regions_div"></div>
+  </body>
 </html>

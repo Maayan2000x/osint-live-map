@@ -1,78 +1,112 @@
 <!DOCTYPE html>
 <html>
-  <head>
-    <meta charset="utf-8">
-    <title>Country Stance Map</title>
+<head>
+<meta charset="utf-8" />
+<title>Diagnostic Map</title>
 
-    <style>
-      html, body { height:100%; margin:0; }
-      #regions_div { width:100%; height:100%; }
-    </style>
+<style>
+  html, body { height: 100%; margin: 0; }
+  #map { height: 100%; width: 100%; }
+  #log { position: absolute; top:0; left:0; background:white; z-index:9999; max-height:200px; overflow:auto; font-size:12px; border:1px solid black; padding:5px; }
+</style>
 
-    <script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+</head>
 
-    <script type="text/javascript">
-      google.charts.load('current', {
-        'packages':['geochart'],
-      });
+<body>
+<div id="log">Loading…</div>
+<div id="map"></div>
 
-      google.charts.setOnLoadCallback(drawRegionsMap);
+<script>
+// LOG FUNCTION
+function log(msg) {
+  document.getElementById("log").innerHTML += msg + "<br>";
+  console.log(msg);
+}
 
-      function drawRegionsMap() {
+const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTW9bj91CB10n8fciv4NykoBf0JYDvBIrnYWas7I125uc-hltvtjNloatvpAsBCY1G7uD0VImPrfUzJ/pub?output=csv";
 
-        // LIVE SHEET URL
-        const query = new google.visualization.Query(
-          'https://docs.google.com/spreadsheets/d/1qx66Rk8WavEiY-7hUn8xZW0z8oU-A2CaMCl_jtQHCSU/gviz/tq?gid=572594260'
-        );
+// stance colors
+const stanceColors = {
+  supportive: "#2ECC71",
+  neutral: "#F1C40F",
+  "neutral-bad": "#E67E22",
+  opposed: "#E74C3C"
+};
 
-        query.send(handleData);
-      }
+// parse CSV safely
+async function loadCSV() {
+  log("Fetching CSV…");
+  const res = await fetch(CSV_URL);
+  const text = await res.text();
+  log("CSV fetched.");
 
-      function handleData(response) {
-        if (response.isError()) {
-          console.error('Error:', response.getMessage());
-          return;
-        }
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+  const rows = lines.slice(1).map(line => {
+    const cols = line.split(",");
+    const obj = {};
+    headers.forEach((h,i) => obj[h] = cols[i] ? cols[i].trim() : "");
+    return obj;
+  });
 
-        const data = response.getDataTable();
+  log("Parsed " + rows.length + " rows.");
+  rows.forEach(r => log("ROW: " + JSON.stringify(r)));
 
-        // stance → color
-        const colors = {
-          'supportive': '#2ECC71',
-          'neutral': '#F1C40F',
-          'neutral-bad': '#E67E22',
-          'opposed': '#E74C3C'
-        };
+  return rows;
+}
 
-        // create a DataView that adds a color column
-        const view = new google.visualization.DataView(data);
-        view.setColumns([
-          0, // country
-          {
-            type: 'string',
-            label: 'Color',
-            calc: function (dt, row) {
-              const stance = dt.getValue(row, 1).toLowerCase();
-              return colors[stance] || '#cccccc';
-            }
-          },
-          2 // notes
-        ]);
+async function main() {
+  const map = L.map("map").setView([20, 0], 2);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 6 }).addTo(map);
 
-        const options = {
-          colorAxis: {colors:['#cccccc','#cccccc']},
-          legend: 'none',
-          tooltip: { isHtml: true }
-        };
+  const rows = await loadCSV();
 
-        const chart = new google.visualization.GeoChart(document.getElementById('regions_div'));
-        chart.draw(view, options);
-      }
-    </script>
+  const geo = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson")
+    .then(r => r.json());
 
-  </head>
+  log("Loaded GeoJSON with " + geo.features.length + " countries.");
 
-  <body>
-    <div id="regions_div"></div>
-  </body>
+  const dataMap = {};
+  rows.forEach(r => {
+    const key = r.country.toLowerCase();
+    dataMap[key] = r;
+    log("Data key added: " + key);
+  });
+
+  function style(feature) {
+    const name = (feature.properties.ADMIN || "");
+    const key = name.toLowerCase();
+    const row = dataMap[key];
+
+    if (!row) {
+      log("NO MATCH for " + name);
+      return { color:"#555", fillColor:"#ccc", fillOpacity:0.4 };
+    }
+
+    const stance = row.stance.toLowerCase();
+    const color = stanceColors[stance] || "#999";
+
+    log("MATCH: " + name + " → " + stance + " → " + color);
+
+    return { color:"#333", fillColor:color, fillOpacity:0.8 };
+  }
+
+  function onEach(feature, layer) {
+    const name = feature.properties.ADMIN;
+    const key = name.toLowerCase();
+    const row = dataMap[key];
+    const notes = row ? row.notes : "No data";
+    layer.bindTooltip(name + "\n" + notes);
+  }
+
+  L.geoJson(geo, { style, onEachFeature: onEach }).addTo(map);
+
+  log("Map render complete.");
+}
+
+main();
+</script>
+</body>
 </html>

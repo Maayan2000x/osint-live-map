@@ -19,7 +19,7 @@
 <div id="map"></div>
 
 <script>
-// YOUR LIVE GOOGLE SHEET (Visualization API)
+// YOUR GOOGLE SHEET — LIVE DATA (NO CSV)
 const sheetID = "1qx66Rk8WavEiY-7hUn8xZW0z8oU-A2CaMCl_jtQHCSU";
 const gid = "572594260";
 const sheetQueryUrl =
@@ -29,7 +29,7 @@ const sheetQueryUrl =
   gid +
   "&tqx=out:json";
 
-// FINAL stance colors
+// stance → color
 const stanceColors = {
   supportive: "#2ECC71",
   neutral: "#F1C40F",
@@ -37,95 +37,57 @@ const stanceColors = {
   opposed: "#E74C3C"
 };
 
-// ---- MASSIVE, PERMANENT COUNTRY ALIAS LIST ----
-// ANY of these will match correctly. You can add more later if needed.
-const countryAliases = {
-  "united states": "United States",
+// alias dictionary (for future‑proofing)
+const aliases = {
+  "united states of america": "United States",
   "usa": "United States",
-  "u.s.a": "United States",
   "us": "United States",
-  "u.s.": "United States",
   "america": "United States",
-
+  "u.s.": "United States",
+  
   "south korea": "Republic of Korea",
   "s korea": "Republic of Korea",
-  "republic of korea": "Republic of Korea",
   "korea south": "Republic of Korea",
-
+  
   "north korea": "Democratic People's Republic of Korea",
-
+  
   "russia": "Russian Federation",
-  "russian federation": "Russian Federation",
-
+  
   "iran": "Iran (Islamic Republic of)",
-  "islamic republic of iran": "Iran (Islamic Republic of)",
-
+  
   "venezuela": "Venezuela (Bolivarian Republic of)",
   "bolivia": "Bolivia (Plurinational State of)",
+
   "tanzania": "United Republic of Tanzania",
-
-  "czechia": "Czech Republic",
-
-  "cape verde": "Cabo Verde",
-
   "moldova": "Republic of Moldova",
-
-  "syria": "Syrian Arab Republic",
-
+  
+  "czechia": "Czech Republic",
+  
   "ivory coast": "Côte d'Ivoire",
   "cote d'ivoire": "Côte d'Ivoire",
 
   "dr congo": "Democratic Republic of the Congo",
   "democratic republic of congo": "Democratic Republic of the Congo",
+  "congo republic": "Congo",
 
-  "congo": "Congo",
-
-  "united kingdom": "United Kingdom",
   "uk": "United Kingdom",
   "britain": "United Kingdom",
   "great britain": "United Kingdom",
 
   "laos": "Lao People's Democratic Republic",
-
-  "vietnam": "Viet Nam",
-  "viet nam": "Viet Nam",
-
-  "eswatini": "Eswatini",
-  "swaziland": "Eswatini"
+  
+  "vietnam": "Viet Nam"
 };
 
-// Normalization helper
-function normalize(str) {
-  return str
-    .toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // strip accents
-    .replace(/[^a-z0-9 ]/g, "") // remove punctuation
+// normalization
+function norm(str) {
+  return str.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9 ]/g, "")
     .trim();
 }
 
-// VERY small fuzzy matcher for near matches
-function fuzzyMatchCountry(input, countryList) {
-  const target = normalize(input);
-  if (countryAliases[target]) return countryAliases[target];
-
-  let best = null;
-  let bestScore = Infinity;
-
-  for (const c of countryList) {
-    const nc = normalize(c);
-    const dist = levenshtein(target, nc);
-    if (dist < bestScore) {
-      bestScore = dist;
-      best = c;
-    }
-  }
-
-  // accept close matches
-  if (bestScore <= 4) return best;
-  return null;
-}
-
-// Levenshtein distance function
+// Levenshtein
 function levenshtein(a, b) {
   const m = [];
   for (let i = 0; i <= b.length; i++) m[i] = [i];
@@ -133,18 +95,32 @@ function levenshtein(a, b) {
 
   for (let i = 1; i <= b.length; i++) {
     for (let j = 1; j <= a.length; j++) {
-      m[i][j] = b.charAt(i-1) === a.charAt(j-1)
+      m[i][j] = b[i-1] === a[j-1]
         ? m[i-1][j-1]
-        : Math.min(m[i-1][j-1] + 1, m[i][j-1] + 1, m[i-1][j] + 1);
+        : Math.min(m[i-1][j-1]+1, m[i][j-1]+1, m[i-1][j]+1);
     }
   }
   return m[b.length][a.length];
 }
 
-// LOAD SHEET DATA LIVE (no publishing needed)
+// fuzzy match
+function matchCountry(input, geoNames) {
+  const n = norm(input);
+  if (aliases[n]) return aliases[n];
+
+  let best = null;
+  let score = Infinity;
+  for (const g of geoNames) {
+    const d = levenshtein(n, norm(g));
+    if (d < score) { score = d; best = g; }
+  }
+  return score <= 4 ? best : null;
+}
+
+// ---- LOAD SHEET LIVE ----
 google.charts.load("current", { packages: ["table"] });
 
-function loadSheetData() {
+function loadSheet() {
   return fetch(sheetQueryUrl)
     .then(r => r.text())
     .then(text => {
@@ -153,30 +129,29 @@ function loadSheetData() {
 
       const headers = table.cols.map(c => (c.label || "").toLowerCase());
       const rows = table.rows.map(r =>
-        r.c.map(cell => (cell && cell.v ? String(cell.v).trim() : ""))
+        r.c.map(c => (c && c.v ? String(c.v).trim() : ""))
       );
 
-      const data = rows.map(row => {
-        const obj = {};
-        headers.forEach((h, i) => obj[h] = row[i] || "");
-        return obj;
-      });
-
-      return data.filter(r =>
+      return rows.map(row => {
+        const o = {};
+        headers.forEach((h, i) => o[h] = row[i] || "");
+        return o;
+      }).filter(r =>
         r.country && r.country.trim() !== "" &&
         r.stance && r.stance.trim() !== ""
       );
     });
 }
 
-async function loadMap() {
+async function initMap() {
   const map = L.map("map").setView([20, 0], 2);
-  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 6 })
-    .addTo(map);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 6
+  }).addTo(map);
 
-  const data = await loadSheetData();
+  const rows = await loadSheet();
 
-  // Load GEOJSON
+  // Load geojson
   const geo = await fetch(
     "https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson"
   ).then(r => r.json());
@@ -184,9 +159,8 @@ async function loadMap() {
   const geoNames = geo.features.map(f => f.properties.ADMIN);
   const stanceMap = {};
 
-  // Apply fuzzy matching and aliasing
-  data.forEach(r => {
-    const match = fuzzyMatchCountry(r.country, geoNames);
+  rows.forEach(r => {
+    const match = matchCountry(r.country, geoNames);
     if (match) {
       stanceMap[match.toLowerCase()] = {
         stance: r.stance.toLowerCase(),
@@ -196,25 +170,25 @@ async function loadMap() {
   });
 
   function style(feature) {
-    const name = (feature.properties.ADMIN || "").toLowerCase();
-    const entry = stanceMap[name];
+    const name = feature.properties.ADMIN.toLowerCase();
+    const e = stanceMap[name];
     let color = "#cccccc";
-    if (entry && stanceColors[entry.stance]) color = stanceColors[entry.stance];
+    if (e && stanceColors[e.stance]) color = stanceColors[e.stance];
     return { weight: 1, color: "#333", fillColor: color, fillOpacity: 0.75 };
   }
 
-  function onEachFeature(feature, layer) {
+  function each(feature, layer) {
     const name = feature.properties.ADMIN || "";
-    const entry = stanceMap[name.toLowerCase()];
-    let tooltip = name;
-    if (entry && entry.notes) tooltip += "\n" + entry.notes;
-    layer.bindTooltip(tooltip, { sticky: true });
+    const e = stanceMap[name.toLowerCase()];
+    let tip = name;
+    if (e && e.notes) tip += "\n" + e.notes;
+    layer.bindTooltip(tip, { sticky: true });
   }
 
-  L.geoJson(geo, { style, onEachFeature }).addTo(map);
+  L.geoJson(geo, { style, onEachFeature: each }).addTo(map);
 }
 
-google.charts.setOnLoadCallback(loadMap);
+google.charts.setOnLoadCallback(initMap);
 </script>
 
 </body>

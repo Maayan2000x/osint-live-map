@@ -101,7 +101,9 @@ async function main() {
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
   const rows = await loadCSV();
-  const geo = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson").then(r => r.json());
+  const geo = await fetch(
+  "https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json"
+).then(r => r.json());
 
   log("Loaded GeoJSON with " + geo.features.length + " countries.");
 

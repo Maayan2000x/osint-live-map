@@ -7,6 +7,7 @@
 <style>
   html, body { height: 100%; margin: 0; }
   #map { height: 100%; width: 100%; }
+  #log { position:absolute; top:0; left:0; background:white; z-index:9999; max-height:200px; overflow:auto; font-size:12px; border:1px solid black; padding:5px; }
 </style>
 
 <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
@@ -15,13 +16,19 @@
 </head>
 <body>
 
+<div id="log">Loading…</div>
 <div id="map"></div>
 
 <script>
-// LIVE CSV
+// LOG WINDOW
+function log(msg) {
+  document.getElementById("log").innerHTML += msg + "<br>";
+  console.log(msg);
+}
+
 const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTW9bj91CB10n8fciv4NykoBf0JYDvBIrnYWas7I125uc-hltvtjNloatvpAsBCY1G7uD0VImPrfUzJ/pub?output=csv";
 
-// Correct colors
+// stance colors
 const stanceColors = {
   supportive: "#2ECC71",
   neutral: "#F1C40F",
@@ -29,7 +36,7 @@ const stanceColors = {
   opposed: "#E74C3C"
 };
 
-// Fully correct RFC4180 CSV parser
+// Correct CSV parser
 function parseCSV(text) {
   const rows = [];
   let cur = "";
@@ -69,52 +76,79 @@ function parseCSV(text) {
 }
 
 async function loadCSV() {
+  log("Fetching CSV…");
   const res = await fetch(CSV_URL);
   const text = await res.text();
-  const parsed = parseCSV(text);
+  log("CSV fetched.");
 
+  const parsed = parseCSV(text);
   const headers = parsed[0].map(h => h.toLowerCase().trim());
+
   const rows = parsed.slice(1).map(cols => {
-    const obj = {};
-    headers.forEach((h,i) => obj[h] = cols[i] || "");
-    return obj;
+    const o = {};
+    headers.forEach((h, i) => o[h] = cols[i] || "");
+    return o;
   });
+
+  log("Parsed " + rows.length + " rows.");
+  rows.forEach(r => log("ROW: " + JSON.stringify(r)));
 
   return rows.filter(r => r.country && r.stance);
 }
 
-async function init() {
+async function main() {
   const map = L.map("map").setView([20, 0], 2);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 
-  const data = await loadCSV();
+  const rows = await loadCSV();
+  const geo = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson").then(r => r.json());
 
-  const geo = await fetch("https://raw.githubusercontent.com/datasets/geo-countries/master/data/countries.geojson").then(r=>r.json());
+  log("Loaded GeoJSON with " + geo.features.length + " countries.");
 
-  const rows = {};
-  data.forEach(r => {
-    rows[r.country.toLowerCase()] = r;
+  const dataMap = {};
+  rows.forEach(r => {
+    dataMap[r.country.toLowerCase()] = r;
+    log("Data key added: " + r.country.toLowerCase());
   });
 
-  function style(f) {
-    const name = f.properties.ADMIN.toLowerCase();
-    const row = rows[name];
-    if (!row) return { color:"#555", fillColor:"#ccc", fillOpacity:0.4 };
+  function style(feature) {
+    let name = feature.properties.ADMIN;
+
+    // FIX: handle missing or empty names
+    if (!name || name.trim() === "") {
+      log("Unnamed feature - applying fallback style");
+      return { color:"#333", fillColor:"#ddd", fillOpacity:0.2 };
+    }
+
+    const key = name.toLowerCase();
+    const row = dataMap[key];
+
+    if (!row) {
+      log("NO MATCH for " + name);
+      return { color:"#555", fillColor:"#ccc", fillOpacity:0.4 };
+    }
+
     const stance = row.stance.toLowerCase();
-    return { color:"#333", fillColor: stanceColors[stance] || "#ccc", fillOpacity:0.8 };
+    const color = stanceColors[stance] || "#999";
+    log("MATCH: " + name + " → " + stance + " → " + color);
+
+    return { color:"#333", fillColor:color, fillOpacity:0.8 };
   }
 
-  function each(f,layer){
-    const name = f.properties.ADMIN;
-    const row = rows[name.toLowerCase()];
+  function each(feature, layer) {
+    const name = feature.properties.ADMIN || "(Unnamed)";
+    const key = name.toLowerCase();
+    const row = dataMap[key];
     const notes = row ? row.notes : "No data";
     layer.bindTooltip(name + "\n" + notes);
   }
 
   L.geoJson(geo, { style, onEachFeature: each }).addTo(map);
+
+  log("Map render complete.");
 }
 
-init();
+main();
 </script>
 
 </body>

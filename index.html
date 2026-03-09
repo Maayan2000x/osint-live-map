@@ -25,16 +25,29 @@
       top: 12px;
       left: 12px;
       z-index: 1000;
-      background: rgba(255,255,255,0.95);
+      background: rgba(255,255,255,0.96);
       padding: 10px 12px;
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.15);
       font-size: 14px;
-      max-width: 320px;
+      max-width: 340px;
+    }
+
+    #status-text {
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    #last-updated {
+      font-size: 12px;
+      color: #444;
+      margin-top: 6px;
+      margin-bottom: 8px;
     }
 
     .legend {
       line-height: 1.6;
+      margin-top: 8px;
     }
 
     .legend-row {
@@ -52,29 +65,66 @@
       flex: 0 0 14px;
     }
 
+    .filters {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      margin-bottom: 8px;
+    }
+
+    .filter-btn {
+      border: 1px solid #bbb;
+      background: #fff;
+      border-radius: 6px;
+      padding: 5px 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .filter-btn.active {
+      font-weight: 700;
+      border-color: #666;
+    }
+
     .country-tooltip {
-  font-size: 13px;
-  line-height: 1.4;
-  max-width: 260px;
-  white-space: normal;
-  word-wrap: break-word;
-}
+      font-size: 13px;
+      line-height: 1.4;
+      max-width: 260px;
+      white-space: normal;
+      word-wrap: break-word;
+    }
 
-.country-tooltip strong {
-  display: block;
-  margin-bottom: 4px;
-}
+    .country-tooltip strong {
+      display: block;
+      margin-bottom: 4px;
+    }
 
-.leaflet-tooltip {
-  max-width: 260px;
-}
+    .leaflet-tooltip {
+      max-width: 260px;
+    }
+
+    .leaflet-popup-content {
+      max-width: 260px;
+      white-space: normal;
+      word-wrap: break-word;
+      line-height: 1.4;
+      font-size: 13px;
+    }
   </style>
 </head>
 <body>
 
 <div id="status">
   <div id="status-text">Loading map…</div>
-  <hr>
+  <div id="last-updated">Last updated: loading…</div>
+
+  <div class="filters">
+    <button class="filter-btn active" data-filter="all">All</button>
+    <button class="filter-btn" data-filter="supportive">Supportive</button>
+    <button class="filter-btn" data-filter="opposed">Opposed</button>
+  </div>
+
   <div class="legend">
     <div class="legend-row"><span class="swatch" style="background:#2ECC71;"></span> Supportive</div>
     <div class="legend-row"><span class="swatch" style="background:#F1C40F;"></span> Neutral</div>
@@ -97,8 +147,26 @@
     opposed: "#E74C3C"
   };
 
+  let map;
+  let geoJsonLayer;
+  let geoData;
+  let currentDataMap = {};
+  let activeFilter = "all";
+  let refreshTimer = null;
+
+  const isTouchDevice =
+    window.matchMedia("(pointer: coarse)").matches ||
+    "ontouchstart" in window ||
+    navigator.maxTouchPoints > 0;
+
   function setStatus(text) {
     document.getElementById("status-text").textContent = text;
+  }
+
+  function setLastUpdated() {
+    const now = new Date();
+    document.getElementById("last-updated").textContent =
+      "Last updated: " + now.toLocaleString();
   }
 
   function normalizeName(name) {
@@ -160,7 +228,7 @@
   }
 
   async function loadCSVRows() {
-    const res = await fetch(CSV_URL);
+    const res = await fetch(CSV_URL + "&t=" + Date.now());
     const text = await res.text();
 
     const parsed = parseCSV(text);
@@ -216,102 +284,170 @@
     return map;
   }
 
+  function getFeatureName(feature) {
+    return (
+      feature?.properties?.name ||
+      feature?.properties?.NAME ||
+      feature?.properties?.ADMIN ||
+      feature?.properties?.admin ||
+      ""
+    );
+  }
+
+  function getRowForFeature(feature) {
+    const rawName = getFeatureName(feature);
+    const normalized = normalizeName(rawName);
+    return currentDataMap[normalized] || null;
+  }
+
+  function passesFilter(row) {
+    if (activeFilter === "all") return true;
+    if (!row) return false;
+    return normalizeName(row.stance) === activeFilter;
+  }
+
+  function styleFeature(feature) {
+    const row = getRowForFeature(feature);
+    const stance = row ? normalizeName(row.stance) : "";
+    const isVisible = passesFilter(row);
+
+    if (!isVisible) {
+      return {
+        color: "#999",
+        weight: 1,
+        fillColor: "#eeeeee",
+        fillOpacity: 0.15
+      };
+    }
+
+    return {
+      color: "#555",
+      weight: 1,
+      fillColor: stanceColors[stance] || "#D3D3D3",
+      fillOpacity: row ? 0.8 : 0.45
+    };
+  }
+
+  function tooltipHtml(feature) {
+    const name = getFeatureName(feature) || "Unknown";
+    const row = getRowForFeature(feature);
+    const stanceLabel = row ? row.stance : "No data";
+    const notes = row && row.notes ? row.notes : "No notes yet.";
+
+    return `
+      <div class="country-tooltip">
+        <strong>${escapeHtml(name)}</strong>
+        <div><b>Stance:</b> ${escapeHtml(stanceLabel)}</div>
+        <div style="margin-top:6px;">${formatNotes(notes)}</div>
+      </div>
+    `;
+  }
+
+  function highlightFeature(e) {
+    if (isTouchDevice) return;
+    const layer = e.target;
+    layer.setStyle({
+      weight: 2,
+      color: "#222"
+    });
+
+    if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+      layer.bringToFront();
+    }
+
+    layer.openTooltip();
+  }
+
+  function resetHighlight(e) {
+    if (geoJsonLayer) {
+      geoJsonLayer.resetStyle(e.target);
+    }
+    if (!isTouchDevice) {
+      e.target.closeTooltip();
+    }
+  }
+
+  function onEachFeature(feature, layer) {
+    const html = tooltipHtml(feature);
+
+    layer.bindTooltip(html, {
+      sticky: true,
+      direction: "auto",
+      opacity: 0.95
+    });
+
+    layer.bindPopup(html);
+
+    layer.on({
+      mouseover: highlightFeature,
+      mouseout: resetHighlight,
+      click: function () {
+        if (isTouchDevice) {
+          layer.openPopup();
+        }
+      }
+    });
+  }
+
+  function renderMap() {
+    if (geoJsonLayer) {
+      map.removeLayer(geoJsonLayer);
+    }
+
+    geoJsonLayer = L.geoJson(geoData, {
+      style: styleFeature,
+      onEachFeature: onEachFeature
+    }).addTo(map);
+  }
+
+  async function refreshData(showLoadingMessage = false) {
+    try {
+      if (showLoadingMessage) {
+        setStatus("Refreshing data…");
+      }
+
+      const rows = await loadCSVRows();
+      currentDataMap = buildDataMap(rows);
+
+      renderMap();
+      setLastUpdated();
+      setStatus("Loaded. Updates refresh automatically every minute.");
+    } catch (err) {
+      console.error(err);
+      setStatus("Could not refresh data.");
+    }
+  }
+
+  function setupFilters() {
+    document.querySelectorAll(".filter-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        activeFilter = btn.dataset.filter;
+        renderMap();
+      });
+    });
+  }
+
   async function main() {
-    const map = L.map("map", {
+    map = L.map("map", {
       worldCopyJump: true
     }).setView([20, 10], 2);
 
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; OpenStreetMap contributors'
+      attribution: "&copy; OpenStreetMap contributors"
     }).addTo(map);
 
-    setStatus("Loading sheet data…");
-    const rows = await loadCSVRows();
-    const dataMap = buildDataMap(rows);
+    setupFilters();
 
     setStatus("Loading country shapes…");
-    const geo = await fetch(GEOJSON_URL).then(r => r.json());
+    geoData = await fetch(GEOJSON_URL).then(r => r.json());
 
-    function getFeatureName(feature) {
-      return (
-        feature?.properties?.name ||
-        feature?.properties?.NAME ||
-        feature?.properties?.ADMIN ||
-        feature?.properties?.admin ||
-        ""
-      );
-    }
+    await refreshData(true);
 
-    function getRowForFeature(feature) {
-      const rawName = getFeatureName(feature);
-      const normalized = normalizeName(rawName);
-      return dataMap[normalized] || null;
-    }
-
-    function style(feature) {
-      const row = getRowForFeature(feature);
-      const stance = row ? normalizeName(row.stance) : "";
-      const fillColor = stanceColors[stance] || "#D3D3D3";
-
-      return {
-        color: "#555",
-        weight: 1,
-        fillColor,
-        fillOpacity: row ? 0.8 : 0.45
-      };
-    }
-
-    function highlightFeature(e) {
-      const layer = e.target;
-      layer.setStyle({
-        weight: 2,
-        color: "#222"
-      });
-
-      if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
-        layer.bringToFront();
-      }
-
-      layer.openTooltip();
-    }
-
-    function resetHighlight(e) {
-      geoJsonLayer.resetStyle(e.target);
-      e.target.closeTooltip();
-    }
-
-    function onEachFeature(feature, layer) {
-      const name = getFeatureName(feature) || "Unknown";
-      const row = getRowForFeature(feature);
-      const stanceLabel = row ? row.stance : "No data";
-      const notes = row && row.notes ? row.notes : "No notes yet.";
-
-      const tooltipHtml = `
-        <div class="country-tooltip">
-          <strong>${escapeHtml(name)}</strong>
-          <div><b>Stance:</b> ${escapeHtml(stanceLabel)}</div>
-          <div style="margin-top:6px;">${formatNotes(notes)}</div>
-        </div>
-      `;
-
-      layer.bindTooltip(tooltipHtml, {
-        sticky: true,
-        direction: "auto",
-        opacity: 0.95
-      });
-
-      layer.on({
-        mouseover: highlightFeature,
-        mouseout: resetHighlight
-      });
-    }
-
-    const geoJsonLayer = L.geoJson(geo, {
-      style,
-      onEachFeature
-    }).addTo(map);
-
-    setStatus("Loaded. Edit the Google Sheet anytime and refresh the page to see updates.");
+    refreshTimer = setInterval(() => {
+      refreshData(false);
+    }, 60000);
   }
 
   main().catch(err => {

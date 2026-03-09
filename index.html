@@ -53,14 +53,21 @@
     }
 
     .country-tooltip {
-      font-size: 13px;
-      line-height: 1.4;
-    }
+  font-size: 13px;
+  line-height: 1.4;
+  max-width: 260px;
+  white-space: normal;
+  word-wrap: break-word;
+}
 
-    .country-tooltip strong {
-      display: block;
-      margin-bottom: 4px;
-    }
+.country-tooltip strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.leaflet-tooltip {
+  max-width: 260px;
+}
   </style>
 </head>
 <body>
